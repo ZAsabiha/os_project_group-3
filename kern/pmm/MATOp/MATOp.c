@@ -1,5 +1,8 @@
 #include <lib/debug.h>
+#include <pmm/MATIntro/export.h>
 #include "import.h"
+
+#define MAX_ORDER 10
 
 #define PAGESIZE     4096
 #define VM_USERLO    0x40000000
@@ -7,56 +10,83 @@
 #define VM_USERLO_PI (VM_USERLO / PAGESIZE)
 #define VM_USERHI_PI (VM_USERHI / PAGESIZE)
 
-/**
- * Allocate a physical page.
- *
- * 1. First, implement a naive page allocator that scans the allocation table (AT)
- *    using the functions defined in import.h to find the first unallocated page
- *    with normal permissions.
- *    (Q: Do you have to scan the allocation table from index 0? Recall how you have
- *    initialized the table in pmem_init.)
- *    Then mark the page as allocated in the allocation table and return the page
- *    index of the page found. In the case when there is no available page found,
- *    return 0.
- * 2. Optimize the code using memoization so that you do not have to
- *    scan the allocation table from scratch every time.
+/*
+ * Standard buddy-style allocation:
+ * - find smallest k >= order with non-empty free_list[k]
+ * - pop block, split down to 'order'
  */
-unsigned int palloc()
-{
-    // TODO
-    static unsigned int next_alloc_idx = 0;
-    unsigned int i;
-    unsigned int nps = get_nps();
+int palloc_order(unsigned int order) {
+    if (order >= MAX_ORDER) return -1;
 
-    for (i = next_alloc_idx; i < nps; i++) {
-        if (at_is_norm(i) && !at_is_allocated(i)) {
-            at_set_allocated(i, 1);
-            next_alloc_idx = i + 1;
-            return i;
-        }
+    unsigned int k = order;
+    while (k < MAX_ORDER && get_free_list_head(k) == -1) {
+        k++;
+    }
+    if (k >= MAX_ORDER) return -1;
+
+    int pindex = get_free_list_head(k);
+    at_list_remove(k, pindex);
+
+    // Split until reaching requested order
+    while (k > order) {
+        k--;
+
+        int buddy = pindex + (1 << k);
+
+        // Buddy half becomes a free block at order k
+        AT[buddy].order = k;
+        at_set_allocated(buddy, 0);
+        at_list_add(k, buddy);
     }
 
-    for (i = 0; i < next_alloc_idx; i++) {
-        if (at_is_norm(i) && !at_is_allocated(i)) {
-            at_set_allocated(i, 1);
-            next_alloc_idx = i + 1;
-            return i;
-        }
-    }
+    // Allocate the block head
+    AT[pindex].order = order;
+    at_set_allocated(pindex, 1);
 
-    return 0;
+    return pindex;
 }
 
-/**
- * Free a physical page.
- *
- * This function marks the page with given index as unallocated
- * in the allocation table.
- *
- * Hint: Simple.
+unsigned int palloc(void) {
+    int res = palloc_order(0);
+    if (res == -1) return 0;
+    return (unsigned int)res;
+}
+
+/*
+ * Free + merge (buddy coalescing)
+ * FIX: must clear allocated even when we merge, otherwise MATOp test 1.4 fails.
  */
-void pfree(unsigned int pfree_index)
-{
-    // TODO
-    at_set_allocated(pfree_index, 0);
+void pfree_order(unsigned int pindex) {
+    // ALWAYS mark as free first (critical)
+    at_set_allocated(pindex, 0);
+
+    unsigned int order = AT[pindex].order;
+    if (order >= MAX_ORDER) return;
+
+    unsigned int buddy_idx = pindex ^ (1 << order);
+
+    // Buddy must be in user range to merge
+    if (buddy_idx >= VM_USERLO_PI && buddy_idx < VM_USERHI_PI &&
+        at_is_allocated(buddy_idx) == 0 &&
+        AT[buddy_idx].order == order) {
+
+        // Remove buddy from free list and merge upward
+        at_list_remove(order, buddy_idx);
+        at_set_allocated(buddy_idx, 0);
+
+        unsigned int combined = (pindex < buddy_idx) ? pindex : buddy_idx;
+        AT[combined].order = order + 1;
+
+        pfree_order(combined); // recursive merge
+    } else {
+        // Can't merge: just put this block back
+        at_list_add(order, pindex);
+    }
+}
+
+void pfree(unsigned int pindex) {
+    if (pindex < VM_USERLO_PI || pindex >= VM_USERHI_PI) return;
+    if (at_is_allocated(pindex) == 0) return;
+
+    pfree_order(pindex);
 }

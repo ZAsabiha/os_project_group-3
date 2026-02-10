@@ -1,98 +1,138 @@
 #include <lib/debug.h>
+#include <pmm/MATIntro/export.h>
 #include "import.h"
 
-#define PAGESIZE     4096
-#define VM_USERLO    0x40000000
-#define VM_USERHI    0xF0000000
-#define VM_USERLO_PI (VM_USERLO / PAGESIZE)
-#define VM_USERHI_PI (VM_USERHI / PAGESIZE)
+#define MAX_ORDER 10
 
-/**
- * The initialization function for the allocation table AT.
- * It contains two major parts:
- * 1. Calculate the actual physical memory of the machine, and sets the number
- *    of physical pages (NUM_PAGES).
- * 2. Initializes the physical allocation table (AT) implemented in the MATIntro layer
- *    based on the information available in the physical memory map table.
- *    Review import.h in the current directory for the list of available
- *    getter and setter functions.
- */
+#define PAGESIZE      4096
+#define VM_USERLO     0x40000000
+#define VM_USERHI     0xF0000000
+#define VM_USERLO_PI  (VM_USERLO / PAGESIZE)
+#define VM_USERHI_PI  (VM_USERHI / PAGESIZE)
+
+static int is_block_free_normal(unsigned int base, unsigned int order)
+{
+    unsigned int n = 1U << order;
+    unsigned int i;
+
+    // Must stay inside user window
+    if (base < VM_USERLO_PI) return 0;
+    if (base + n > VM_USERHI_PI) return 0;
+
+    // Check all pages in the block are Normal RAM and not allocated
+    for (i = 0; i < n; i++) {
+        unsigned int pi = base + i;
+        if (AT[pi].perm != 2) return 0;
+        if (AT[pi].allocated != 0) return 0;
+    }
+    return 1;
+}
+
 void pmem_init(unsigned int mbi_addr)
 {
-    unsigned int nps;
-
-    // TODO: Define your local variables here.
     unsigned int i, j;
-    unsigned int n_entries;
     unsigned int highest_addr = 0;
-    unsigned int start, len;
-    unsigned int perm;
 
-    // Calls the lower layer initialization primitive.
-    // The parameter mbi_addr should not be used in the further code.
     devinit(mbi_addr);
+    unsigned int n_entries = get_size();
 
-    /**
-     * Calculate the total number of physical pages provided by the hardware and
-     * store it into the local variable nps.
-     * Hint: Think of it as the highest address in the ranges of the memory map table,
-     *       divided by the page size.
-     */
-    // TODO
-       n_entries = get_size();
+    // Find end of physical RAM
     for (i = 0; i < n_entries; i++) {
-        start = get_mms(i);
-        len = get_mml(i);
-        if ((start + len) > highest_addr) {
-            highest_addr = start + len;
+        unsigned int end = get_mms(i) + get_mml(i);
+        if (end > highest_addr) highest_addr = end;
+    }
+    unsigned int phys_nps = highest_addr / PAGESIZE;
+
+    // AT must cover the PI window used by tests
+    set_nps(VM_USERHI_PI);
+
+    pmm_init_freelists();
+
+    // PHASE 1: reset whole AT
+    for (i = 0; i < get_nps(); i++) {
+        at_set_allocated(i, 0);
+        at_set_perm(i, 0);
+        AT[i].next = -1;
+        AT[i].prev = -1;
+        AT[i].order = 0;
+    }
+
+    // Mark below-user window as kernel/reserved (not allocatable)
+    for (i = 0; i < VM_USERLO_PI; i++) {
+        at_set_perm(i, 1);
+    }
+
+    // PHASE 2a: mark user-window pages as Normal/Reserved via BIOS (shifted mapping)
+    for (i = VM_USERLO_PI; i < VM_USERHI_PI; i++) {
+        unsigned int phys_pi = i - VM_USERLO_PI;
+
+        if (phys_pi >= phys_nps) {
+            at_set_perm(i, 0);
+            continue;
+        }
+
+        unsigned int paddr_start = phys_pi * PAGESIZE;
+        unsigned int paddr_end   = paddr_start + PAGESIZE;
+
+        int is_ram = 0;
+        for (j = 0; j < n_entries; j++) {
+            if (!is_usable(j)) continue;
+
+            unsigned int start = get_mms(j);
+            unsigned int end   = start + get_mml(j);
+
+            if (start <= paddr_start && paddr_end <= end) {
+                is_ram = 1;
+                break;
+            }
+        }
+
+        if (is_ram) {
+            at_set_perm(i, 2);   // Normal RAM
+            at_set_allocated(i, 0);
+        } else {
+            at_set_perm(i, 0);   // Reserved hole
         }
     }
-    nps = highest_addr / PAGESIZE;
 
-    set_nps(nps);  // Setting the value computed above to NUM_PAGES.
-
-    /**
-     * Initialization of the physical allocation table (AT).
+    /*
+     * PHASE 2b: build buddy blocks (populate free lists for all orders)
      *
-     * In CertiKOS, all addresses < VM_USERLO or >= VM_USERHI are reserved by the kernel.
-     * That corresponds to the physical pages from 0 to VM_USERLO_PI - 1,
-     * and from VM_USERHI_PI to NUM_PAGES - 1.
-     * The rest of the pages that correspond to addresses [VM_USERLO, VM_USERHI)
-     * can be used freely ONLY IF the entire page falls into one of the ranges in
-     * the memory map table with the permission marked as usable.
-     *
-     * Hint:
-     * 1. You have to initialize AT for all the page indices from 0 to NPS - 1.
-     * 2. For the pages that are reserved by the kernel, simply set its permission to 1.
-     *    Recall that the setter at_set_perm also marks the page as unallocated.
-     *    Thus, you don't have to call another function to set the allocation flag.
-     * 3. For the rest of the pages, explore the memory map table to set its permission
-     *    accordingly. The permission should be set to 2 only if there is a range
-     *    containing the entire page that is marked as available in the memory map table.
-     *    Otherwise, it should be set to 0. Note that the ranges in the memory map are
-     *    not aligned by pages, so it may be possible that for some pages, only some of
-     *    the addresses are in a usable range. Currently, we do not utilize partial pages,
-     *    so in that case, you should consider those pages as unavailable.
+     * Greedy: at each position, take the largest block you can.
      */
-    // TODO
+    i = VM_USERLO_PI;
+    while (i < VM_USERHI_PI) {
 
-    for (i = 0; i < nps; i++) {
-        if (i < VM_USERLO_PI || i >= VM_USERHI_PI) {
-            at_set_perm(i, 1);
-        } else {
-            perm = 0;
-            for (j = 0; j < n_entries; j++) {
-                if (is_usable(j)) {
-                    start = get_mms(j);
-                    len = get_mml(j);
-                    // Check if the page falls entirely within the usable range
-                    if (start <= (i * PAGESIZE) && (start + len) >= ((i + 1) * PAGESIZE)) {
-                        perm = 2;
-                        break;
-                    }
-                }
-            }
-            at_set_perm(i, perm);
+        // skip non-normal pages
+        if (AT[i].perm != 2 || AT[i].allocated != 0) {
+            i++;
+            continue;
         }
+
+        int order;
+        // find largest order that fits, aligned, and all pages normal/free
+        for (order = MAX_ORDER - 1; order >= 0; order--) {
+            unsigned int size = 1U << order;
+
+            // alignment requirement for buddy blocks
+            if ((i & (size - 1)) != 0) continue;
+
+            if (is_block_free_normal(i, (unsigned int)order)) {
+                break;
+            }
+        }
+
+        if (order < 0) {
+            // should not happen, but safe fallback
+            i++;
+            continue;
+        }
+
+        // add this block head to its order list
+        AT[i].order = (unsigned int)order;
+        at_list_add((unsigned int)order, i);
+
+        // skip past the block
+        i += (1U << order);
     }
 }

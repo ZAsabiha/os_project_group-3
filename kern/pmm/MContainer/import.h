@@ -1,15 +1,16 @@
-#ifndef _KERN_PMM_MCONTAINER_H_
-#define _KERN_PMM_MCONTAINER_H_
+#ifndef _KERN_PMM_MCONTAINER_IMPORT_H_
+#define _KERN_PMM_MCONTAINER_IMPORT_H_
 
 #ifdef _KERN_
 
-unsigned int get_nps(void);
-unsigned int at_is_norm(unsigned int page_index);
-unsigned int at_is_allocated(unsigned int page_index);
-void pmem_init(unsigned int mbi_addr);
-unsigned int palloc(void);
-void pfree(unsigned int pfree_index);
+#include <pmm/MATIntro/export.h>
+#include <pmm/MATInit/export.h>
+#include <pmm/MATOp/export.h>
+
+// These constants are standard for the mCertiKOS process tree
+#define NUM_IDS 1024
+#define MAX_CHILDREN 8
 
 #endif  /* _KERN_ */
 
-#endif  /* !_KERN_PMM_MCONTAINER_H_ */
+#endif  /* !_KERN_PMM_MCONTAINER_IMPORT_H_ */

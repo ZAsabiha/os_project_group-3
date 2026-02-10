@@ -5,6 +5,8 @@
 
 unsigned int palloc(void);
 void pfree(unsigned int pfree_index);
+// Add this so the test script can verify buddy contiguous allocation
+int palloc_order(unsigned int order); 
 
 #endif  /* _KERN_ */
 

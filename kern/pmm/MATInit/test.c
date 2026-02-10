@@ -20,8 +20,7 @@ int MATInit_test1()
             dprintf("test 1.2 failed (i = %d): (%d != 0)\n", i, at_is_allocated(i));
             return 1;
         }
-        if ((i < VM_USERLO_PI || VM_USERHI_PI <= i)
-            && at_is_norm(i) != 0) {
+        if ((i < VM_USERLO_PI || VM_USERHI_PI <= i) && at_is_norm(i) != 0) {
             dprintf("test 1.3 failed (i = %d): (%d != 0)\n", i, at_is_norm(i));
             return 1;
         }
@@ -30,27 +29,26 @@ int MATInit_test1()
     return 0;
 }
 
-/**
- * Write Your Own Test Script (optional)
- *
- * Come up with your own interesting test cases to challenge your classmates!
- * In addition to the provided simple tests, selected (correct and interesting) test functions
- * will be used in the actual grading of the lab!
- * Your test function itself will not be graded. So don't be afraid of submitting a wrong script.
- *
- * The test function should return 0 for passing the test and a non-zero code for failing the test.
- * Be extra careful to make sure that if you overwrite some of the kernel data, they are set back to
- * the original value. O.w., it may make the future test scripts to fail even if you implement all
- * the functions correctly.
- */
-int MATInit_test_own()
+// Check if the Buddy System was populated during pmem_init
+int MATInit_test_buddy()
 {
-    // TODO (optional)
-    // dprintf("own test passed.\n");
+    int head = get_free_list_head(0);
+    if (head == -1) {
+        dprintf("Buddy Init Test failed: Order 0 free list is empty!\n");
+        return 1;
+    }
+    
+    // Verify the head is actually a normal page
+    if (at_is_norm(head) != 1) {
+        dprintf("Buddy Init Test failed: Head page %d is not Normal RAM\n", head);
+        return 1;
+    }
+
+    dprintf("Buddy Init test passed.\n");
     return 0;
 }
 
 int test_MATInit()
 {
-    return MATInit_test1() + MATInit_test_own();
+    return MATInit_test1() + MATInit_test_buddy();
 }

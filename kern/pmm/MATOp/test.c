@@ -2,6 +2,10 @@
 #include <pmm/MATIntro/export.h>
 #include "export.h"
 
+// Correcting the reference to match your export.h
+// Note the 'struct' keyword before ATStruct
+extern struct ATStruct AT[]; 
+
 #define PAGESIZE     4096
 #define VM_USERLO    0x40000000
 #define VM_USERHI    0xF0000000
@@ -35,23 +39,26 @@ int MATOp_test1()
     return 0;
 }
 
-/**
- * Write Your Own Test Script (optional)
- *
- * Come up with your own interesting test cases to challenge your classmates!
- * In addition to the provided simple tests, selected (correct and interesting) test functions
- * will be used in the actual grading of the lab!
- * Your test function itself will not be graded. So don't be afraid of submitting a wrong script.
- *
- * The test function should return 0 for passing the test and a non-zero code for failing the test.
- * Be extra careful to make sure that if you overwrite some of the kernel data, they are set back to
- * the original value. O.w., it may make the future test scripts to fail even if you implement all
- * the functions correctly.
- */
+// Ownership test to verify buddy system contiguous properties
 int MATOp_test_own()
 {
-    // TODO (optional)
-    // dprintf("own test passed.\n");
+    dprintf("Testing buddy contiguous allocation (Order 2)...\n");
+    int order = 2;
+    int pindex = palloc_order(order); // You'll need to add this to your export.h or export it
+    
+    if (pindex <= 0) {
+        dprintf("Buddy allocation failed.\n");
+        return 1;
+    }
+
+    // Accessing AT[pindex].order now works because of the extern struct ATStruct AT[]
+    if (AT[pindex].order != order) {
+        dprintf("test own failed: Order mismatch. Expected %d, got %d\n", order, AT[pindex].order);
+        return 1;
+    }
+
+    pfree(pindex);
+    dprintf("Buddy contiguous test passed.\n");
     return 0;
 }
 

@@ -31,7 +31,7 @@ void set_nps(unsigned int nps) {
 
 // Getter function for page permission.
 unsigned int at_is_norm(unsigned int page_index) {
-    if (page_index < NUM_PAGES && AT[page_index].perm > 1) {
+    if (page_index < get_nps() && AT[page_index].perm == 2) {
         return 1;
     }
     return 0;
@@ -41,7 +41,6 @@ unsigned int at_is_norm(unsigned int page_index) {
 void at_set_perm(unsigned int page_index, unsigned int perm) {
     if (page_index < NUM_PAGES) {
         AT[page_index].perm = perm;
-        AT[page_index].allocated = 0;
     }
 }
 
@@ -69,17 +68,21 @@ int get_free_list_head(unsigned int order) {
 void at_list_add(unsigned int order, unsigned int page_index) {
     if (order >= MAX_ORDER || page_index >= NUM_PAGES) return;
 
+    // Gatekeeper: buddy freelists must contain ONLY normal RAM pages
+    if (AT[page_index].perm != 2) return;
+
     int current_head = free_list[order];
-    
+
     AT[page_index].order = order;
-    AT[page_index].next = current_head;
-    AT[page_index].prev = -1;
+    AT[page_index].next  = current_head;
+    AT[page_index].prev  = -1;
 
     if (current_head != -1) {
         AT[current_head].prev = (int)page_index;
     }
     free_list[order] = (int)page_index;
 }
+
 
 // Removes a page from the free list at the specified order.
 void at_list_remove(unsigned int order, unsigned int page_index) {

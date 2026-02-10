@@ -57,51 +57,92 @@ int MATIntro_test3() {
 
 // Buddy allocator test case: Verifies the link-list pointers in AT.
 int MATIntro_test_buddy() {
-    // We assume set_nps has been called with a reasonable value in the kernel
-    // but for standalone test, let's ensure it:
-    set_nps(2048); 
+    // Save previous state so we don't contaminate later layers
+    unsigned int old_nps = get_nps();
+
+    set_nps(2048);
     pmm_init_freelists();
+
+    // Make sure pages we add are Normal RAM (perm==2)
+    at_set_allocated(10, 0);
+    at_set_allocated(20, 0);
+    at_set_perm(10, 2);
+    at_set_perm(20, 2);
+
+    at_set_allocated(512, 0);
+    at_set_perm(512, 2);
 
     // Test A: Add pages to Order 0 (4KB)
     at_list_add(0, 10);
     at_list_add(0, 20);
 
-    // Since we add to head, 20 should be first
     if (get_free_list_head(0) != 20) {
         dprintf("Buddy Test failed: Head of order 0 should be 20, got %d\n", get_free_list_head(0));
+        // cleanup before return
+        at_set_perm(10, 0);
+        at_set_perm(20, 0);
+        at_set_perm(512, 0);
+        pmm_init_freelists();
+        set_nps(old_nps);
         return 1;
     }
 
-    // Test B: Verify 'next' pointer (20 -> 10)
     int head = get_free_list_head(0);
-    if (AT[head].next != 10) { 
+    if (AT[head].next != 10) {
         dprintf("Buddy Test failed: AT[20].next should be 10, got %d\n", AT[head].next);
+        at_set_perm(10, 0);
+        at_set_perm(20, 0);
+        at_set_perm(512, 0);
+        pmm_init_freelists();
+        set_nps(old_nps);
         return 1;
     }
 
-    // Test C: Verify 'prev' pointer (10 -> 20)
     if (AT[10].prev != 20) {
         dprintf("Buddy Test failed: AT[10].prev should be 20, got %d\n", AT[10].prev);
+        at_set_perm(10, 0);
+        at_set_perm(20, 0);
+        at_set_perm(512, 0);
+        pmm_init_freelists();
+        set_nps(old_nps);
         return 1;
     }
 
-    // Test D: Order 9 (Superpages/2MB)
-    at_list_add(9, 512); 
+    at_list_add(9, 512);
     if (get_free_list_head(9) != 512 || AT[512].order != 9) {
         dprintf("Buddy Test failed: Order 9 initialization failed\n");
+        at_set_perm(10, 0);
+        at_set_perm(20, 0);
+        at_set_perm(512, 0);
+        pmm_init_freelists();
+        set_nps(old_nps);
         return 1;
     }
 
-    // Test E: Removal
     at_list_remove(0, 20);
     if (get_free_list_head(0) != 10 || AT[10].prev != -1) {
         dprintf("Buddy Test failed: Removal logic failed to update head/prev\n");
+        at_set_perm(10, 0);
+        at_set_perm(20, 0);
+        at_set_perm(512, 0);
+        pmm_init_freelists();
+        set_nps(old_nps);
         return 1;
     }
 
     dprintf("Buddy list logic tests passed.\n");
+
+    // ✅ CLEANUP: remove contamination for later layers
+    at_set_perm(10, 0);
+    at_set_perm(20, 0);
+    at_set_perm(512, 0);
+    pmm_init_freelists();
+    set_nps(old_nps);
+
     return 0;
 }
+
+
 
 // The main entry point for the MATIntro layer test.
 int test_MATIntro() {
