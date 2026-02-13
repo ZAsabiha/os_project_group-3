@@ -10,41 +10,57 @@
 #define VM_USERLO_PI  (VM_USERLO / PAGESIZE)
 #define VM_USERHI_PI  (VM_USERHI / PAGESIZE)
 
-static int is_block_free_normal(unsigned int base, unsigned int order)
+static int is_block_free_normal(unsigned int base, unsigned int order)    // block starting at base of size 2^order pages completely free and normal RAM
 {
-    unsigned int n = 1U << order;
+    unsigned int number_of_pages = 1U << order;    // Compute Block Size
     unsigned int i;
 
-    // Must stay inside user window
-    if (base < VM_USERLO_PI) return 0;
-    if (base + n > VM_USERHI_PI) return 0;
+    
+    if (base < VM_USERLO_PI) {                 // Must stay inside user window
+        return 0;
+    }
+    if (base + number_of_pages > VM_USERHI_PI) {          // Must stay inside user window
+        return 0;
+    }
 
     // Check all pages in the block are Normal RAM and not allocated
-    for (i = 0; i < n; i++) {
-        unsigned int pi = base + i;
-        if (AT[pi].perm != 2) return 0;
-        if (AT[pi].allocated != 0) return 0;
+
+    for (i = 0; i < number_of_pages; i++) {           // For every page in the block
+        unsigned int pi = base + i;        // iterate through the block for each page
+        if (AT[pi].perm != 2 || AT[pi].allocated != 0) {    // If any page is not Normal RAM or is allocated
+            return 0;
+        }
     }
     return 1;
 }
 
-void pmem_init(unsigned int mbi_addr)
+
+/*This function does 4 major things-
+1.Detect physical RAM size from BIOS
+2.Reset the Allocation Table (AT)
+3.Mark which pages are usable RAM
+4.Build buddy free lists (all block sizes)
+*/
+void pmem_init(unsigned int mbi_addr)     // full physical memory initialization for buddy allocator
 {
     unsigned int i, j;
     unsigned int highest_addr = 0;
 
-    devinit(mbi_addr);
-    unsigned int n_entries = get_size();
+    devinit(mbi_addr);                      // Initialize the device ram
+    unsigned int n_entries = get_size();    // Detect Physical RAM
 
     // Find end of physical RAM
     for (i = 0; i < n_entries; i++) {
         unsigned int end = get_mms(i) + get_mml(i);
-        if (end > highest_addr) highest_addr = end;
+        if (end > highest_addr) {
+            highest_addr = end;
+        }
     }
-    unsigned int phys_nps = highest_addr / PAGESIZE;
+    unsigned int phys_nps = highest_addr / PAGESIZE;     // how many physical pages exist
 
-    // AT must cover the PI window used by tests
-    set_nps(VM_USERHI_PI);
+
+    
+    set_nps(VM_USERHI_PI);    // AT must cover the PI window used by tests/users
 
     pmm_init_freelists();
 
@@ -57,17 +73,17 @@ void pmem_init(unsigned int mbi_addr)
         AT[i].order = 0;
     }
 
-    // Mark below-user window as kernel/reserved (not allocatable)
-    for (i = 0; i < VM_USERLO_PI; i++) {
+    
+    for (i = 0; i < VM_USERLO_PI; i++) {    // Mark below-user window as kernel (not allocatable)
         at_set_perm(i, 1);
     }
 
-    // PHASE 2a: mark user-window pages as Normal/Reserved via BIOS (shifted mapping)
+    // PHASE 2a: mark user-window pages as Normal via BIOS (shifted mapping)
     for (i = VM_USERLO_PI; i < VM_USERHI_PI; i++) {
-        unsigned int phys_pi = i - VM_USERLO_PI;
+        unsigned int phys_pi = i - VM_USERLO_PI;    // virtual user page index → real physical page index
 
-        if (phys_pi >= phys_nps) {
-            at_set_perm(i, 0);
+        if (phys_pi >= phys_nps) {     // if page is outside physical RAM
+            at_set_perm(i, 0);        // mark reserved
             continue;
         }
 
@@ -76,7 +92,10 @@ void pmem_init(unsigned int mbi_addr)
 
         int is_ram = 0;
         for (j = 0; j < n_entries; j++) {
-            if (!is_usable(j)) continue;
+
+            if (!is_usable(j)) {
+                continue;
+            }
 
             unsigned int start = get_mms(j);
             unsigned int end   = start + get_mml(j);
@@ -101,7 +120,7 @@ void pmem_init(unsigned int mbi_addr)
      * Greedy: at each position, take the largest block you can.
      */
     i = VM_USERLO_PI;
-    while (i < VM_USERHI_PI) {
+    while (i < VM_USERHI_PI) {        // for each page
 
         // skip non-normal pages
         if (AT[i].perm != 2 || AT[i].allocated != 0) {
@@ -115,15 +134,16 @@ void pmem_init(unsigned int mbi_addr)
             unsigned int size = 1U << order;
 
             // alignment requirement for buddy blocks
-            if ((i & (size - 1)) != 0) continue;
+            if ((i & (size - 1)) != 0) {
+                continue;
+            }
 
             if (is_block_free_normal(i, (unsigned int)order)) {
                 break;
             }
         }
 
-        if (order < 0) {
-            // should not happen, but safe fallback
+        if (order < 0) {   // should not happen, but safe fallback
             i++;
             continue;
         }
@@ -133,6 +153,6 @@ void pmem_init(unsigned int mbi_addr)
         at_list_add((unsigned int)order, i);
 
         // skip past the block
-        i += (1U << order);
+        i += (1U << order);    // Instead of moving 1 page, jump entire block size
     }
 }

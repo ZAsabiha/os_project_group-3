@@ -1,15 +1,15 @@
 #include <lib/gcc.h>
+#include <math.h>
 #include "export.h"
 
-#define MAX_ORDER 11
+#define MAX_ORDER 11               // ------------------ for 4mb superpage allocation
+#define RAM_PAGES 1048576          // -------------------for 4GB / 4KB
 
 static unsigned int NUM_PAGES;
 
-/* This allocates the actual memory. 
-   Compiler uses the struct definition from export.h */
-struct ATStruct AT[1 << 20];
+struct ATStruct AT[RAM_PAGES];     // metadata array for all the pages
 
-static int free_list[MAX_ORDER];
+static int free_list[MAX_ORDER];   // doubly-linked list of free blocks per order
 
 
 // Initialize the freelists to empty
@@ -19,81 +19,93 @@ void pmm_init_freelists(void) {
     }
 }
 
-// Getter function for NUM_PAGES.
-unsigned int get_nps(void) {
+
+unsigned int get_nps(void) {                            // Getter function for NUM_PAGES
     return NUM_PAGES;
 }
 
-// Setter function for NUM_PAGES.
-void set_nps(unsigned int nps) {
+
+void set_nps(unsigned int nps) {                       // Setter function for NUM_PAGES
     NUM_PAGES = nps;
 }
 
-// Getter function for page permission.
-unsigned int at_is_norm(unsigned int page_index) {
+
+unsigned int at_is_norm(unsigned int page_index) {    // Getter function if a page is in user space or not
+
     if (page_index < get_nps() && AT[page_index].perm == 2) {
         return 1;
     }
     return 0;
 }
 
-// Setter function for page permission.
-void at_set_perm(unsigned int page_index, unsigned int perm) {
+
+void at_set_perm(unsigned int page_index, unsigned int perm) {     // Setter function for page permission.
     if (page_index < NUM_PAGES) {
         AT[page_index].perm = perm;
     }
 }
 
-// Getter function for page allocation status.
-unsigned int at_is_allocated(unsigned int page_index) {
+
+unsigned int at_is_allocated(unsigned int page_index) {            // Getter function for page allocation status.
     if (page_index < NUM_PAGES && AT[page_index].allocated > 0) {
         return 1;
     }
     return 0;
 }
 
-// Setter function for page allocation status.
-void at_set_allocated(unsigned int page_index, unsigned int allocated) {
+
+void at_set_allocated(unsigned int page_index, unsigned int allocated) { // Setter function for page allocation status.
     if (page_index < NUM_PAGES) {
         AT[page_index].allocated = allocated;
     }
 }
 
-int get_free_list_head(unsigned int order) {
-    if (order >= MAX_ORDER) return -1;
+int get_free_list_head(unsigned int order) {             // returns the first page index(base) of that order of free list
+    if (order >= MAX_ORDER) {
+        return -1;
+    }
     return free_list[order];
 }
 
-// Add a page to the free list at the specified order.
-void at_list_add(unsigned int order, unsigned int page_index) {
-    if (order >= MAX_ORDER || page_index >= NUM_PAGES) return;
 
-    // Gatekeeper: buddy freelists must contain ONLY normal RAM pages
-    if (AT[page_index].perm != 2) return;
+void at_list_add(unsigned int order, unsigned int page_index) {    // Add a page to the free list of an order
+
+    if (order >= MAX_ORDER || page_index >= NUM_PAGES) {
+        return;
+    }
+
+    
+    if (AT[page_index].perm != 2) {             // buddy freelists must contain ONLY normal RAM pages
+        return;
+    }
 
     int current_head = free_list[order];
 
     AT[page_index].order = order;
-    AT[page_index].next  = current_head;
+    AT[page_index].next  = current_head;       // pointer to the next page in the free list  
     AT[page_index].prev  = -1;
 
     if (current_head != -1) {
         AT[current_head].prev = (int)page_index;
     }
-    free_list[order] = (int)page_index;
+    free_list[order] = (int)page_index;      // adds the base physical page index to the head of the free list of that order
 }
 
 
 // Removes a page from the free list at the specified order.
 void at_list_remove(unsigned int order, unsigned int page_index) {
-    if (order >= MAX_ORDER || page_index >= NUM_PAGES) return;
+
+    if (order >= MAX_ORDER || page_index >= NUM_PAGES) {
+        return;
+    }
 
     int n = AT[page_index].next;
     int p = AT[page_index].prev;
 
     if (p != -1) {
         AT[p].next = n;
-    } else {
+    } 
+    else {
         free_list[order] = n;
     }
 
