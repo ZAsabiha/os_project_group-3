@@ -1,7 +1,7 @@
 #include <lib/gcc.h>
 #include "export.h"
 
-#define MAX_ORDER 10
+#define MAX_ORDER 11
 
 static unsigned int NUM_PAGES;
 
