@@ -2,7 +2,7 @@
 #include <pmm/MATIntro/export.h>
 #include "import.h"
 
-#define MAX_ORDER 10
+#define MAX_ORDER 11
 
 #define PAGESIZE     4096
 #define VM_USERLO    0x40000000
